@@ -1,0 +1,1137 @@
+---
+title: "Brazilian Houses"
+author: "Francesco C., Giulia G., Gaia N., Gabriele P."
+date: "2023-06-12"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+## 1.Picking and Understanding a Dataset
+
+We opted for the Brazilian houses dataset because it motivates us in investigating the driving forces behind high rents, in this case in Brazil, and it recreates a real case scenario where we as analysts must inform the new company's entry into the real estate market.
+
+Our goal is to build a predictive model that determines the rental amount based on specific characteristics of houses. This will provide valuable insights into the housing rental market in major cities across Brazil.
+
+We first load libraries that will be useful
+```{r include=FALSE}
+#Packages
+library(corrplot) #used for the correlation matrix
+library(tidyverse)# used for duplicated()
+library(dplyr) 
+library(magrittr)
+library(gridExtra)#used to plot 
+library(heatmaply)#used for heat map
+library(ggplot2)#used for plots
+library(mice)#used for substitution of NA values on floor 
+library(gridExtra)#used for plot arrange
+library(DataExplorer) #used for EDA
+library(factoextra)#used for cluster
+library(cluster)#used for cluster
+library(dendextend)#used for cluster
+library(mclust)#used for cluster
+library(caret)#used for KNN
+library(scatterplot3d)#used for scatterplot
+library(glmnet) #used for LASSO AND RIDGE
+library(xgboost) #used for XGBoost
+library(GGally) #used in clustering 
+library(purrr)#used for heirarchical
+library(randomForest) #used for random forest
+library(kernlab)#used for svm
+library(tinytex)
+```
+To start our project we will investigate some trends and important aspects of the Brazilian's house-rent market.
+We start by importing the dataset and having a little overview of it.
+
+**Loading the dataset**
+```{r}
+#The read.csv function in R is used to read data from a CSV (Comma-Separated Values) file 
+#and store it as a data frame in R. 
+Data <- read.csv('BrazHousesRent.csv')
+
+#little OVERVIEW of the dataset: structure and summary 
+
+#The str() function in R is used to display the structure of an R object.
+#It provides a concise summary of the object's internal structure, including its type,
+#dimensions, and the data contained within it.
+str(Data)
+```
+
+The structure analysis provides a clear understanding of the data's characteristics. 
+The data frame consists of four factors, representing categorical variables that store data as levels. 
+These factors can accommodate both strings and integers.
+
+Specifically, "floor," "city," "animal," and "furniture" are factors, while the remaining eight variables are integers.
+
+```{r}
+#The summary() function is widely used for analyzing data frames, where it provides summaries for each variable in the data frame.
+#For numeric variables, it displays the minimum, 1st quartile, median, mean, 3rd quartile, and maximum values.
+#For factors and other categorical variables, it presents the frequency counts of each level.
+#summary(Data)
+```
+
+From the summary study we can notice something intriguing:
+the variable "hoa..R.."(Monthly Homeowners Association Tax), ranges from 0 to 1117000, but has a mean of 1174, this means that the small values and the extremely big values are not many.
+This gives us a hint on the presence of outliers, which presence is not surprising since the dataset is created by a web crawler.
+
+Same thing is visible for other variables such as:
+- "property.tax..R.." (Yearly property taxes in Real), ranges from 0.0 to 313700.0 but the 1st quartile, Median and 3rd quartile are lower that 400 and the mean is 366.7, so the Maximum is way higher than all these observations, clearly it is an outlier.
+- "area" (Property area), ranges from 11.0 and 46335.0, same reasoning as the other variables, probably all the big values are few,since the mean has a quite smaller value (149.2).
+
+By analyzing the structure of the data we can see that floor is stored as character but should be a number (since it expresses the floor number of the house), so we must convert it.
+We can also see that animal, city and furniture could be better expressed as factors.
+
+**Cleaning dataset**
+
+We then check for missing values.
+NA stands for "Not Available", they are special values that represents missing data.
+It is important to know how many NA values are present in the dataframe.
+
+```{r echo=FALSE, warning=FALSE}
+#Convert floor in numeric 
+Data$floor <- as.numeric(Data$floor)
+
+#Convert animal,city,furniture as factors
+Data$animal <- as.factor(Data$animal)
+Data$city <- as.factor(Data$city)
+Data$furniture <- as.factor(Data$furniture)
+
+#checking null values 
+sapply(Data, function(x) sum(is.na(x)))
+```
+We can see that only floor contains null values, we will deal with them later!
+
+
+We then proceed by dropping any duplicates.
+```{r}
+#dropping DUPLICATES
+Data <- Data[!duplicated(Data),] #dataframe with no duplicates
+```
+
+Another annoying aspect we noticed from analyzing the structure of the dataset is the name of some variables, so we changed it.
+And since it is convenient we also move the target variable (rent.amount) as last column in the dataset.
+
+```{r}
+##Let's move the target(rent) variable to the last column 
+Data <- Data[, c(names(Data)[names(Data) != "rent.amount..R.."], "rent.amount..R..")]
+
+#lets CHANGE NAMES to the columns for the sake of simplicity 
+Data <- rename(Data, monthly.tax = hoa..R..)
+Data <- rename(Data, rent.amount = rent.amount..R..)
+Data <- rename(Data, property.tax = property.tax..R..)
+Data <- rename(Data, fire.insurance = fire.insurance..R..)
+
+```
+
+**Dealing with NULL Values**
+
+Let's deal with the null values in the floor column :
+
+The interpretation of floor's values is that floor 1 represents the ground floor, as it works is a lot of states, so we decided to use mean or median imputation for replacing the nulls in the floor column.
+In particular we will use PMM Mice method, from the MICE Package, which stands for predictive mean matching, a regression model which uses the other variables as predictors; trivially, it uses rows having similar predictors of the missing value row, and impute the missing value of the row by using the “similar” values as predictors.
+
+*The code is reported in Rscript*
+```{r include=FALSE}
+#using PMM to face the NA values problem in the FLOOR column
+library(mice) 
+brz_data <- Data
+# Create the imputation object. We will use a simple pmm.
+set.seed(123)
+imp <- mice(brz_data, method = "pmm")
+imputed <- complete(imp)[,"floor"]
+# replaced imputed data with previous 
+brz_data$floor[is.na(brz_data$floor)] <- imputed[is.na(brz_data$floor)] #replacing the new imputed with previous
+```
+
+After all these cleaning and changing is useful to see a summary of our "new" data:
+```{r echo=FALSE}
+#We did some further observations of the cleaned dataset, but avoided printing it!
+#head(brz_data)
+#str(brz_data)
+
+#a little summary of the new dataset
+summary(brz_data)
+```
+We must keep in mind,as previously announced, that the data have been gathered through a web-crawler so it is crucial to check and eliminate outliers, as they have the potential to disrupt the integrity of our results and the accuracy of our models.
+
+**Outliers**
+
+Outliers are data points that are significantly different from the majority of the data. They can impact statistical analyses and may indicate unique observations or data issues. Handling outliers depends on the context, and they can be removed, adjusted, or given special consideration based on their impact and underlying reasons.
+In our case we will remove them since most of them are probably errors (for example 301 in "floor" which probably was meant to be 30 since the highest building in Brazil has 51 floors).
+
+An important question to answer is from which variables should we remove outliers?
+From the summary analysis we can notice that most of the numerical variables seem to contain outliers, since their max or/and min differ so much from mean/median, but let's plot these variables to understand better if all of them contain really outliers or not.
+
+```{r fig.height=4, fig.width=7}
+# We select numeric features
+numeric_cols <- sapply(Data, is.numeric)
+numeric_features <- names(numeric_cols)[numeric_cols]
+numeric_features <-  numeric_features[-9] #we exclude the target variable
+```
+
+
+```{r echo=FALSE, fig.height=4, fig.width=7}
+# We set the layout for the plots
+par(mfrow = c(3, 3), mar=c(2,2,4,1))
+
+#We create box plots for all numerical features
+for (i in 1:length(numeric_features)) {
+  feature <- numeric_features[i]
+  boxplot(Data[[feature]], main = feature, ylab = "Value",horizontal= TRUE)
+}
+
+```
+
+From these boxplot we can surely state that 'area', 'monthly.tax', 'property.tax', 'fire.insurance', 'rent.amount', 'parking.spaces', 'rooms' and 'floor' contain outliers.
+The variable from which we will NOT remove outliers with the interquartile method is "bathroom", since we have noticed that there are too many houses that have only one bathroom, considering it in the removal of outliers, would mean removing too many rows. 
+
+**Remove OUTLIERS using interquartiles**
+
+```{r}
+#looking for outliers
+outlier_cols <- c('area', 'monthly.tax','property.tax','fire.insurance','rent.amount','parking.spaces','rooms','floor')
+brz_col <- brz_data[, outlier_cols]
+q1 <- apply(brz_col, 2, quantile, probs = 0.25, na.rm = TRUE)
+q3 <- apply(brz_col, 2, quantile, probs = 0.75, na.rm = TRUE)
+iqr <- q3 - q1
+upper <- q3 + 1.5 * iqr
+lower <- q1 - 1.5 * iqr
+outliers <- apply(brz_col, 1, function(x) any(x < lower | x > upper, na.rm = TRUE))
+
+# Identify outliers rows
+outlier_rows <- row.names(brz_col)[outliers] # Print the number of outliers detected
+
+# Drop rows with outliers
+#Cleaned Data is our new dataframe containing all independent variables encoded and without outliers 
+brz_cleaned <- brz_data[!outliers,]
+
+```
+
+The outliers detected are 2079 which is a pretty good number considering the dimension of our dataset and its origin.
+
+```{r include=FALSE}
+#Let's now check how distributed are the observations after removing the outliers.
+
+# We select numeric features
+numeric_cols <- sapply(brz_cleaned, is.numeric)
+numeric_features <- names(numeric_cols)[numeric_cols]
+numeric_features <-  numeric_features[-9] #we exclude the target variable
+
+# Set the layout for the plots
+par(mfrow = c(3, 3), mar=c(2,2,4,1))
+
+# Create box plots for all numerical features
+for (i in 1:length(numeric_features)) {
+  feature <- numeric_features[i]
+  boxplot(brz_cleaned[[feature]], main = feature, ylab = "Value",horizontal= TRUE)
+}
+
+```
+
+## 2. Describing the data: EDA
+Before exploring all the relations between variables is important to distinguish the type of features we are dealing with:
+
+- rent.amount which is our response variable
+- discrete: (floor,parking.spaces,rooms,bathroom)
+- continuous: (area, montly.tax, property.tax, fire.insurance)
+- categorical: (animal,city,furniture)
+
+We will proceed providing a visual description of the ones which can be more explicative for our analyses.
+
+Let's start by taking into account Categorical Variables.
+Since this data have been collected in order to better understand the house-rent market in some of the most important cities in Brazil, the geographical positioning of the houses is a main feature to take into consideration for the analysis.
+
+**CATEGORICAL VARIABLES**
+
+Let's start by analyzing how the rent amount changes according in which city the house is located.
+
+```{r echo=FALSE, fig.height=2.5, fig.width=6, warning=FALSE}
+#This graph shows the mean rent amount and how it changes for every city 
+brz_cleaned %>%
+  group_by(city) %>%
+  mutate(mean_by_city = mean(rent.amount)) %>%
+  ungroup() %>%
+  mutate(city = fct_reorder(city, mean_by_city)) %>%
+  ggplot(aes(city, rent.amount, colour = city,
+             show.legend = F)) +
+  coord_flip() +
+  geom_jitter(show.legend = F,
+              size = 4,
+alpha = 0.2,
+              width = 0.05) +
+  stat_summary(fun = mean, geom = "point", size = 8, show.legend = F) +
+  geom_hline(aes(yintercept = mean(rent.amount)),
+             colour = "gray70",
+             size = 0.9) +
+  geom_segment(aes(x = city, xend = city,
+                   y = mean(rent.amount), yend = mean_by_city),
+               size = 2, show.legend = F) +
+  labs(title = "Rent amount of houses by City",
+       x = "City",
+       y = "Rent amount of houses") +
+  theme(legend.position = "none") +
+  theme_bw()
+```
+
+The grey line represents the average rent for all houses. The small dots represent all the observations (houses) for each city, while the big dots represent the average rent amount for each specific city.
+We can see that the house located in San Paolo have a rent amount above average, the houses located in Rio de Janeiro have a rent amount close to average and  the ones located in Belo Horizonte have a rent amount slightly less than average and the houses in Campinas and Porto Alegre have a rent amount less than average.
+
+We will use a barplot to study the city, animal, furniture variables and to better answer to these questions:
+
+- which is the city where it is easier to find a house to rent?
+
+- Are pets usually allowed when renting a house in Brazil?
+
+- If I want to rent a house in Brazil should I worry about possibly having to pay for my furniture?
+
+*We decided not to show the barplots but only to comment them*
+```{r fig.height=3, fig.width=5, include=FALSE}
+#A barplot is a graphical representation of categorical data using rectangular bars.
+#The bars in a bar plot represent the values or frequencies of different categories or groups. 
+#The length or height of each bar corresponds to the value or frequency of that category.
+#Bar plot for the different categories
+plot_bar(brz_cleaned,ncol = 1)
+```
+
+From these graphs we can notice that:
+
+Most houses (to rent) are located in San Paolo, this makes sense since it is the biggest city of Brazil.
+The city with less frequency, so less houses, according to the dataset, is Campinas.
+
+It is also evident that the houses that accept animals are more with respect to the houses that do not accept them.
+
+Lastly we can observe that most houses are not furnished, this makes sense since we are studying a rent-house dataframe, usually when you rent a house, you have to provide yourself with furniture.
+
+Let's explore even better how RENT.AMOUNT is affected by the categorical variables, through a boxplot.
+
+```{r echo=FALSE, fig.height=3, fig.width=12}
+#A Boxplot is a graphical representation of the distribution of a dataset and it provides a summary of key statistical measures and helps to identify the presence of outliers.The box in a boxplot represents the interquartile range (IQR), which is the range between the first quartile (Q1) and the third quartile (Q3) of the data. It contains the middle 50% of the dataset. The line inside the box represents the median.
+# Create the box plot for rent by city with colors
+rent_city <- brz_cleaned %>%
+  group_by(city) %>%
+  ggplot(aes(x = city, y = rent.amount, fill = city)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_bw() +
+  ggtitle("Rent by City") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Create the box plot for rent by furniture with colors
+rent_furniture <- brz_cleaned %>%
+  group_by(furniture) %>%
+  ggplot(aes(x = furniture, y = rent.amount, fill = furniture)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_bw() +
+  ggtitle("Rent by Furniture") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Create the box plot for rent by animal with colors
+rent_animal <- brz_cleaned %>%
+  group_by(animal) %>%
+  ggplot(aes(x = animal, y = rent.amount, fill = animal)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_bw() +
+  ggtitle("Rent by Animal") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange the plots in a grid
+grid.arrange(rent_city, rent_furniture, rent_animal, ncol = 3)
+
+```
+
+From this boxplots we can see that houses in Sao Paulo cost more than in other places as the interquartile and the median show (coherent with our first plot). Also, the majority of the most expensive are located in this city.
+While pet allowance does not make a huge difference in rent prices, furniture does. 
+The lower quartile of the furnished home rental price corresponds to the median of not furnished ones, indicating a relevant difference in rental prices.
+
+**NUMERICAL VARIABLES: DISCRETE**
+
+Let's now take into consideration discrete variables how are the values distributed for each feature.
+Let's use a barplot:
+
+```{r include=FALSE}
+discrete_feat = c("floor","parking.spaces","rooms","bathroom")
+p_list <- list()
+for (x in discrete_feat){
+  p <- plot_bar(as.factor(brz_cleaned[,x]), title=x, order_bar = TRUE)
+  p_list[x] <- p
+  
+}
+```
+
+
+```{r echo=FALSE, fig.height=7, fig.width=13}
+# Arrange the plots in a grid
+grid.arrange(grobs = p_list, ncol = 2)
+```
+
+From the graphs we can say that:
+
+- most houses have only 1 bathroom, there are just a few that have more than 3.
+- the room graph shows us that very few houses have 7 rooms, while the majority have 2/3.
+- from the parking.space bar plot we can see that many houses have no parking space, but there are a lot that have at least 1 or 2.
+- the floor graph shows us that in Brazil it is more frequent to rent houses at lower floors.
+
+Now let's see how this variables relate with the target variable rent.
+
+*We decided not to show the plots but only to comment them.*
+```{r include=FALSE}
+#brz_cleaned is the dataset with no outliers
+#datset containing onlu numerical variables
+num_v = subset(brz_cleaned, select = -c(city,animal,furniture))
+
+# Distribution of the response variable according to the parking spaces
+parking = num_v %>% group_by(parking.spaces) %>% ggplot(aes(parking.spaces, rent.amount, group=parking.spaces)) + geom_boxplot() + scale_y_log10()+ theme_bw() + ggtitle("Rent by parking space")
+
+#Distribution of response variable according to the number of rooms
+#bigger number of rooms, higher rent value
+room<- num_v %>% group_by(rooms) %>%  ggplot(aes(rooms, rent.amount, group= rooms)) + geom_boxplot() +  scale_y_log10()+ theme_bw() +ggtitle("Rent by room number")
+
+
+#Distribution of response variable according to the number of floors
+floors <- num_v %>% group_by(floor) %>%  ggplot(aes(floor, rent.amount, group= floor)) + geom_boxplot() +  scale_y_log10()+ theme_bw() +ggtitle("Rent by floor number")
+
+
+#Distribution of response variable according to the number of bathrooms 
+bath <- num_v %>% group_by(bathroom) %>%  ggplot(aes(bathroom, rent.amount, group= bathroom)) + geom_boxplot() +  scale_y_log10()+ theme_bw() +ggtitle("Rent by bathroom  number")
+
+grid.arrange(parking, room,floors,bath, ncol = 2)
+
+
+```
+
+Observing these boxplot we can state that they are more or less all skewed, meaning that higher values (of floor, room, parking space, bathrooms) correspond to higher rent amount, this makes absolutely sense!
+For example we can notice that the houses having 4 or more rooms have higher rents amounts.
+We notice that houses with 5 bathrooms have higher rent amounts.
+For parking space we can see that the more parking space the more the rent amount this is quite intuitive.
+
+**NUMERICAL VARIABLES: CONTINOUS**
+
+We will use histogram to describe the distribution of the continuos variables.
+A histogram provides a graphical representation of the data by dividing it into intervals called "bins" along the x-axis and displaying the frequency or count of observations within each bin on the y-axis.
+
+```{r echo=FALSE, fig.height=2, fig.width=8}
+continous_feat = c("area", "monthly.tax", "property.tax", "fire.insurance")
+par(mfrow = c(1,4))
+for(i in continous_feat){
+    hist(brz_cleaned[,i], freq = F, main = names (brz_cleaned[i]),col = rgb(.7,.7,.7), border = "white", xlab = "")
+    
+    abline(v = mean(brz_cleaned[,i]), lwd = 2)
+    abline(v = median(brz_cleaned[,i]), lwd = 2, col = rgb(.7,0,0))
+    legend("topright", c("Mean", "Median"), lwd = 2, col = c(1, rgb(.7,0,0)),cex = .8, bty = "o", border = 'black')
+  }
+```
+
+Observing these histogram we can state that all the continous variables are right skewed, meaning that the majority of the data points are concentrated towards the left side of the histogram, while a smaller number of data points have higher values that extend towards the right.
+We can see in this histogram that the mean is larger than the median since the mean is influenced by the extreme values in the right tail. 
+The median,instead, being a robust measure of central tendency, is less affected by extreme values and is closer to the bulk of the data.
+This is why we must scale our data.
+
+**Scaling Data**
+
+Scaling data is important because:
+
+It helps avoid bias by ensuring that all features contribute equally. Scaling enhances convergence, making optimization algorithms more efficient. It improves model performance, especially for distance-based algorithms. Scaling facilitates the interpretation of feature importance. Certain algorithms require standardized or normalized data for accurate results.
+
+It is not necessary to scale discrete variables since they already have a predefined set of distinct values. Scaling is typically applied to continuous variables to ensure that they are on a similar scale and to prevent any potential bias in the model. It is why we are not scaling the variables *rooms*, *bathroom*, *parking.spaces*, *floor*.
+
+```{r}
+variables_to_scale <- c("area", "monthly.tax", "property.tax", "fire.insurance")
+scaled_var <- scale(brz_cleaned[, variables_to_scale])
+finaldata <- brz_cleaned 
+finaldata[, variables_to_scale] <- scaled_var
+```
+
+For our regression task we will use the new version of the dataset: finaldata
+
+Before analyzing how the continuous variables interact with the target (rent.amount), let's plot the correlation matrix:
+
+**CORRELATION MATRIX**
+
+```{r echo=FALSE, fig.height=4, fig.width=7, warning=FALSE}
+#we used the numerical data scaled
+#correlation matrix and heatmap, the data are scaled in the heatmaply() function 
+plot_correlation(brz_cleaned, maxcat =1L, theme_config = list(legend.position = "right", axis.text.x = element_text(angle = 90)))
+```
+
+Interesting insights from the correlation matrix:
+
+- remarkable correlation between the target variable and fire.insurance;
+- rooms,area and rent.amount are correlated and is quite intuitive why: one would want to spend more if there are more rooms and space in a house and viceversa.
+- since the only 2 highly correlated variables are the fire insurance and the target rent.amount there is no apparent risk of multicollinearity among predictors.
+
+So the most interesting relationship to inquire are the one between:
+
+- area vs rent.amount 
+- fire.insurance vs rent.amount
+
+To see how this variables are related with the response variable we will use scatterplots.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+#A scatter plot is a type of plot used to visualize the relationship between two continuous variables. It represents individual data points as dots on a two-dimensional coordinate system, where one variable is plotted on the x-axis and the other on the y-axis. 
+
+#Create a scatterplot to plot relation between fire.insurance and rent.amount
+scatterplot_insurance<-ggplot(finaldata, aes(x = fire.insurance, y = rent.amount)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color= 'red') +
+  xlab("fire.insurance") +
+  ylab("rent.amount") +
+  ggtitle("Fire Insurance vs Rent Amount")
+
+#Create a scatterplot to plot relation between area and rent.amount
+scatterplot_area<-ggplot(brz_cleaned, aes(x = area, y = rent.amount)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color= 'red') +
+  xlab("area") +
+  ylab("rent.amount") +
+  ggtitle("Area vs Rent Amount")
+
+#Arrange plot in a grid
+grid.arrange(scatterplot_insurance, scatterplot_area, ncol = 2)
+```
+
+Between the two scatterplot the most striking is the one between fire.insurance and rent.amount, that show that even taking the fire.insurance as a single predictor could be a decent solution,given the high positive correlation.
+Also area seem to have a positive relation with rental prices.
+
+## 3. Objective of the first task
+Our primary goal was initially to identify the features that would make real estate more profitable.
+This objective holds practical significance for real estate companies, property owners, renters, and market analysts. It provides valuable insights into rent pricing, facilitates decision-making processes, and enhances overall understanding of the dynamics within the rental market.
+Thanks to the EDA we've already observed how rental prices are higher in some areas (Sao Paulo) and how some characteristics significantly increase the rent price (higher number of parking spaces, bathroom, rooms, floor) and we've highlighted that there is a strong correlation between fire insurance and rent.amount.
+
+We want to be able to answer questions like:
+
+-Are there significant price variations among different cities?
+
+-What would be a fair price for rent if the house has 5 rooms and 2 bathrooms or if the house is located in this area?
+
+-If I have a pet it more convenient to search a house in which area?
+
+## 4. Lower-dimensional model
+
+**Splitting the dataset**
+
+We use the dataset finaldata, as is the one already scaled and encoded.
+
+75% of data will be for the train set, and 25% for the test. 
+```{r}
+set.seed(123)
+idx <- sample.int(n = nrow(finaldata), size = floor(.75*nrow(finaldata)), replace = F)  
+
+test_set <- finaldata[-idx,]
+
+x <- finaldata[,1:11]
+y <- finaldata$rent.amount
+
+# Training set
+x_train <- x[idx, ] 
+y_train <- y[idx]
+
+# Test set
+x_test <- x[-idx, ]
+y_test <- y[-idx]
+
+brz_train_sc <- x_train
+brz_train_sc$rent.amount <- y_train
+```
+
+```{r eval=FALSE, include=FALSE}
+#we insert rent.amount in the training set because we need it to train the model
+#while is important instead that y_test is not in x_test
+```
+
+After seeing the high correlation between fire.insurance and rent.amount and plotted their relation, we need to build a linear regression with fire.insurance as only predictor.
+
+**Linear Regression with 'fire.insurance'**
+
+Linear regression is a statistical method utilized to determine a linear association between a dependent variable and one or more independent variables. Its objective is to identify the line of best fit that minimizes the disparity between observed and predicted values.
+In linear regression, the p-value plays a crucial role as it assesses the null hypothesis that the coefficient for an independent variable is zero, indicating no relationship.
+
+```{r echo=FALSE}
+#we train the model with brz_train_sc
+linear_model <- lm(rent.amount ~ fire.insurance, brz_train_sc)
+summary(linear_model)
+```
+```{r include=FALSE}
+linear_prediction <- predict(linear_model, newdata = x_test)
+
+rmse_linear = sqrt(mean((y_test - linear_prediction)^2))
+
+```
+
+```{r echo=FALSE}
+cat("RMSE with linear model on test set:", rmse_linear)
+```
+
+The R-squared value of 0.9668 indicates that approximately 96.68% of the variance in the rent amount can be explained by the linear regression model with fire insurance as the only predictor, suggesting that the fire insurance variable, has a strong ability to explain the variation in rent amounts.
+
+The adjusted R-squared value of 0.9668 takes into account the number of predictors in the model and penalizes the addition of unnecessary variables. Since there is only one predictor in this model, the adjusted R-squared value is the same as the R-squared value. This implies that the inclusion of additional predictors would not significantly improve the model's explanatory power.
+
+The RMSE,  353.5419, for the linear model with only "fire.insurance" is relatively low compared to the range of the response variable.
+
+**Linear Regression with 'area'**
+
+Since we have noticed more than once the importance of fire.insurance as predictor, we think is interesting to see a linear regression model which has as predictor area instead of fire insurance, as area is definitely less correlated to rent amount.
+
+```{r echo=FALSE}
+#we train the model with brz_train_sc
+linear_model <- lm(rent.amount ~ area, brz_train_sc)
+summary(linear_model)
+```
+```{r include=FALSE}
+linear_prediction <- predict(linear_model, newdata = x_test)
+
+rmse_linear = sqrt(mean((y_test - linear_prediction)^2))
+```
+
+```{r echo=FALSE}
+cat("RMSE with linear model on test set:", rmse_linear)
+```
+
+The multiple R-squared value of 0.3548 indicates that approximately 35.48% of the variance in the rent amount is accounted for by the area.
+The adjusted R-squared in this case is 0.3547, which is slightly lower than the multiple R-squared.
+The RMSE is 1527.402, indicates the average prediction error in terms of rent amount.
+The results suggest that a model using only the area explains a moderate amount of the variation in rent amount. However, there is still a considerable amount of unexplained variability, as indicated by the RMSE value. It is important to consider other factors that influence the rent amount to improve the model's performance.
+
+It's worth to notice that as we remove fire.insurance as predictor the RMSE falls considerably.
+
+We build a multiple linear regression for our lower dimensional model.
+
+**Multiple regression: fire.insurance + area**
+
+Let's try adding to the linear model another predictor.
+We decided to insert area, because in our opinion it partly encloses the information of variables like parking.space, room, bathroom,and floor and it has a trivial positive correlation with rent.amount.
+
+Multiple regression is a statistical technique used to model the relationship between a dependent variable and two or more independent variables. 
+It extends simple linear regression, which involves only one independent variable, to incorporate multiple predictors.
+
+```{r}
+#We start building the model with predictors: area and fire.insurance
+multiple_linear_model <- lm(rent.amount ~ fire.insurance + area , data = brz_train_sc)
+#summary(multiple_linear_model)
+```
+
+The p-value in linear regression tests the null hypothesis that the coefficient for an independent variable is zero (no relationship).
+As in this case, a p-value lower than 0.05 suggests a statistically significant relationship between the independent variables and the dependent variable.
+The R-squared quantifies the proportion of variance explained by the independent variables, with higher values indicating a better fit.
+In our case the Adjusted R-squared is high (0.9693),so the variance explained is big.
+
+```{r echo=FALSE, fig.height=6, fig.width=12, message=FALSE, warning=FALSE}
+multiple_linear_model_cv <- predict(multiple_linear_model, newdata = test_set)
+
+s3d <- scatterplot3d(x_test$area, x_test$fire.insurance, y_test,  xlab = 'Area', ylab = 'Fire Insurance', zlab = 'Rent Amount', angle = 250, color = 'blue')
+
+s3d$points3d(x_test$area, x_test$fire.insurance, multiple_linear_model_cv, col = 'red')
+
+rmse_mll = sqrt(mean((y_test - multiple_linear_model_cv)^2))
+```
+
+The plot consists of three axes: the x-axis represents the fire insurance , the y-axis represents the rent amount, and the z-axis represents the area. Each *blue* data point corresponds to the observations (combination of area, fire insurance, and the actual rent amount), while *red* points on the plot represent the predicted rent amount based on the multiple linear regression model (which has fire.insurance and area as predictors) using the test data.
+
+We know proceed measuring the performance of our models on the train and on the test set.
+We will use R^2,Adjusted R^2 and RMSE.
+
+R-squared (coefficient of determination) measures the proportion of the variance in the dependent variable that can be explained by the independent variables in the model. It ranges from 0 to 1, with higher values indicating a better fit. 
+
+Adjusted R-squared is a modification of R-squared that penalizes the inclusion of irrelevant variables in the model. 
+
+```{r}
+# Calculate R-squared 
+r_squared <- summary(multiple_linear_model)$r.squared
+
+# Calculate adjusted R-squared
+n <- length(finaldata$rent.amount)
+p <- length(coef(multiple_linear_model)) - 1  # Number of predictors (excluding intercept)
+adjusted_r_squared <- 1 - (1 - r_squared) * ((n - 1) / (n - p - 1))
+```
+
+```{r echo=FALSE}
+# Print the evaluation metrics
+cat("R-squared:", r_squared, "\n")
+```
+
+```{r echo=FALSE}
+cat("Adjusted R-squared:", adjusted_r_squared, "\n")
+```
+
+The R-squared value of 0.9692678  indicates that approximately 97% of the variance in the rent amount can be explained by the independent variables (area and fire insurance) included in the model. This is a high R-squared value, suggesting that the model is able to explain a significant amount of the variation in the rent amount based on these two variables.
+
+The adjusted R-squared value of 0.9692604 takes into account the number of predictors in the model and penalizes the addition of unnecessary variables. It is very close to the R-squared value, indicating that the inclusion of area and fire insurance as predictors has not resulted in a significant reduction in the adjusted R-squared value. This suggests that these two variables are highly relevant in explaining the rent amount and that the model is not overfitting.
+
+RMSE (Root Mean Squared Error) is a measure of the average prediction error of a regression model. It represents the square root of the mean squared differences between the predicted and actual values.
+A lower RMSE indicates a better fit of the model, with smaller average prediction errors.
+
+First let's calculate RMSE on the training set:
+```{r include=FALSE}
+# Calculate R-squared on the training set
+predicted_train <- predict(multiple_linear_model, data = x_train)
+
+# Calculate root mean squared error (RMSE) on TRAIN SET
+actual_train <- y_train
+rmse_train <- sqrt(mean((actual_train - predicted_train)^2))
+
+cat("RMSE on train set:", rmse_train, "\n")
+```
+
+We now predict on the test set and measure the actual performance of our multiple regression.
+```{r echo=FALSE}
+#Let's predict on test set
+predicted_test <- predict(multiple_linear_model, newdata = x_test)
+
+# Calculate root mean squared error (RMSE) on TEST SET
+actual_test <- y_test
+rmse_test <- sqrt(mean((actual_test- predicted_test)^2))
+
+cat("RMSE on the test data:", rmse_test, "\n")
+```
+
+Comparing the RMSE of different models helps identify the one that provides more accurate predictions for the dependent variable.
+The RMSE, 342.3592, for the multiple regression model with only "fire.insurance" and "area" is relatively low compared to the range of the response variable.
+
+Comparing the RMSE values, we can observe that the RMSE with both the fire insurance and area variables as predictors (342.36) is slightly better than the RMSE when using only the fire insurance variable as a predictor (353.54).
+Therefore, based on the RMSE values alone, it appears that incorporating the area variable in addition to the fire insurance variable improves the model's predictive performance and leads to more accurate rent amount predictions.
+Although is important to point out that adding "area" did not make an enourmous difference on the RMSE.
+
+Let's try to build more complex models.
+
+## 5. Complex models
+
+**Multiple linear regression model using all predictors**
+
+We implement a multiple regression to predict rent.amount using all features as predictors.
+
+```{r echo=FALSE}
+#multiple linear regression with all the variables
+
+all_multi_linear_mod = lm(rent.amount~., data = brz_train_sc)
+
+# predictions on the train set with previous model
+all_multi_linear_pred_train = predict(all_multi_linear_mod, newdata = brz_train_sc)
+all_ml_RMSE_train = sqrt(mean((y_train - all_multi_linear_pred_train)^2))
+
+R2_all_ml = summary(all_multi_linear_mod)$r.squared
+
+cat('R-Squared with multiple regression: ', R2_all_ml)
+
+cat('\nRMSE (train set) with multiple regression:', all_ml_RMSE_train)
+```
+
+
+```{r echo=FALSE}
+# predictions on the test set with previous model
+all_multi_linear_pred = predict(all_multi_linear_mod, newdata = test_set)
+all_ml_RMSE = sqrt(mean((y_test - all_multi_linear_pred)^2))
+cat('\nRMSE (test set) with multiple regression:', all_ml_RMSE)
+```
+
+The R-squared value of 0.9821303 indicates that approximately 98.21% of the variance in the rent amount can be explained by the multiple regression model that includes all the features as predictors. 
+
+We can see that using all features as predictors has improved our RMSE to 254.83 on the test set.
+
+**AIC**
+
+The Akaike Information Criterion (AIC) is a statistical measure used for model selection. It balances the goodness of fit of a model with its complexity. The AIC takes into account both the model's ability to explain the data and the number of parameters or predictors used. A lower AIC value indicates a better balance between model fit and simplicity. The AIC helps in selecting a model that provides a good fit to the data while avoiding excessive complexity.
+
+```{r include=FALSE}
+multi_lin_aic <- step(lm(brz_train_sc$rent.amount ~ 1,
+                  data = brz_train_sc), scope = formula(all_multi_linear_mod),
+                  direction = "forward")
+
+aic_coeff = sort(coefficients(multi_lin_aic))
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+# Comparison based on deviance test (Chi-square test) for nested models
+anova = anova(all_multi_linear_mod, multi_lin_aic, test = "Chisq") 
+aic_pred = predict(multi_lin_aic, newdata = test_set)
+aic_RMSE = sqrt(mean((y_test - aic_pred)^2))
+cat('RMSE with AIC:', aic_RMSE)
+```
+
+The process starts with a simple model with only an intercept (step: AIC=119157.9, brz_train_sc$rent.amount~1), then it begins adding variables based on the decrease in AIC. Each variable that significantly decreases the AIC is added to the model, and the process continues until there are no more variables that significantly decrease the AIC.
+
+According to the final results, the most significant variables for predicting "rent.amount" in the "brz_train_sc" dataset appear to be "fire.insurance", "monthly.tax", "area", "city", "furniture", "rooms", "floor", "parking.spaces", and "bathroom", as adding these variables led to a significant decrease in AIC.
+
+With the AIC model we achieve a RMSE of 254.7283, which suggest that the model's predictions are reasonably accurate.
+
+**Elastic Net**
+
+Elastic Net is a regularization technique that combines Lasso (L1 regularization) and Ridge (L2 regularization) penalties. It addresses the limitations of individual regularization methods and provides a balance between feature selection and parameter shrinkage in linear regression models.
+Elastic Net has two hyperparameters, alpha and lambda, which control the balance and strength of the regularization, respectively.
+```{r echo=FALSE}
+set.seed(21)
+
+#Cross validation
+tr_contr = trainControl(method  = "cv",
+                        number  = 10) # number of folds
+
+en <- train(rent.amount~.,
+            brz_train_sc,
+            method='glmnet',
+            # alpha and lambda parameters tuning
+            tuneGrid =expand.grid(alpha=seq(0,1,length=10), 
+                                  lambda = seq(0.0001,0.2,length=5)),
+            trControl=tr_contr) # cross validation
+
+tr_RMSE = mean(en$resample$RMSE) #RMSE on train set
+
+en_pred = predict(en, newdata = test_set) #prediction
+en_RMSE = sqrt(mean((y_test - en_pred)^2))
+
+cat('RMSE (train set) with elastic net:', tr_RMSE,"\n")
+cat('RMSE (test set) with elastic net:', en_RMSE)
+```
+
+The RMSE values of 252.2302 on the train set and 254.7048 on the test set suggest that the elastic net model provides reasonably accurate predictions for both the training and testing datasets.
+
+**XGBoost**
+
+XGBoost, a highly advanced gradient boosting algorithm, finds extensive application in regression tasks. It effectively optimizes a loss function using a combination of gradient descent and regularization techniques. With its exceptional predictive performance, XGBoost excels in capturing complex relationships within the data. Moreover, it enables analysis of feature importance, further enhancing its capabilities.
+
+```{r}
+#we make x_train and x_test two matrix 
+set.seed(123)
+x_train_matrix <- data.matrix(x_train)
+x_test_matrix  <- data.matrix(x_test)
+xgb_train = xgb.DMatrix(data = x_train_matrix, label = y_train)
+xgb_test = xgb.DMatrix(data =x_test_matrix, label = y_test)
+```
+
+
+```{r include=FALSE}
+params <- list(booster = "gbtree", objective = "reg:squarederror", gamma=0, max_depth=6, alpha = c(0,1))
+xgbcv <- xgb.cv( params = params, data = xgb_train, nrounds = 300, nfold = 10,  metrics = 'rmse', print_every_n = 10, showsd = T)
+```
+
+*We divide the code in three segments since we don't want to show all the outputs but only the code.*
+
+```{r}
+xgb_model = xgboost(data = xgb_train, max.depth = 6, nrounds = which.min(xgbcv$evaluation_log$test_rmse_mean), verbose = 0, objective = "reg:squarederror")
+
+xgb_pred = predict(xgb_model, xgb_test)
+rmse_xgboost <- sqrt(mean((y_test - xgb_pred)^2))
+```
+
+
+```{r echo=FALSE}
+#we print the RMSE
+cat('RMSE with XGBoost:', rmse_xgboost)
+```
+The RMSE obtain with XGBoost (199.8115) is the better since it is the lower one.
+
+**SVM**
+
+SVM regression is a machine learning algorithm used for predicting continuous outcomes.It can handle linear and non-linear relationships by using kernel functions to map the data into higher-dimensional space.
+In this case we also use the bootstrapping resample method which involves randomly sampling the original dataset with replacement to create multiple bootstrap samples of the same size.
+
+```{r}
+set.seed(123)
+
+ctrl = trainControl(method  = "boot",
+                    number  = 10)
+
+svm_model <- train(
+  rent.amount ~ .,
+  data = brz_train_sc,
+  method = 'svmRadial',
+  trCtrl = ctrl
+)
+
+svm_pred_cv <- predict(svm_model, newdata = x_test)
+
+
+rmse_svm_cv = sqrt(mean((y_test - svm_pred_cv)^2))
+```
+
+
+```{r echo=FALSE}
+cat("RMSE with SVM",rmse_svm_cv)
+```
+
+**Random forest using all the predictors**
+```{r echo=FALSE}
+
+set.seed(123)
+# random forest with cross validation 
+#(tried with oob tuning but RMSE doesn't change)
+rf_fit <- randomForest(brz_train_sc$rent.amount ~ ., trControl  =
+                          tr_cont, data = brz_train_sc)
+
+rf_pred = predict(rf_fit, newdata = test_set)
+rf_RMSE = sqrt(mean((y_test - rf_pred)^2))
+cat('RMSE with classic random forest:', rf_RMSE)
+```
+
+In a Random Forest model, you can assess the importance of variables using the built-in feature importance measure. Random Forest calculates feature importance based on how much each variable contributes to the overall model's performance. The higher the importance value, the more influential the variable is for prediction.
+The feature importance score is calculated based on the decrease in impurity or the decrease in the overall accuracy of the model when a particular feature is included in the tree-based splits.
+
+**Random Forest based on importance**
+
+```{r}
+# Train a Random Forest model
+model <- randomForest(brz_train_sc$rent.amount ~ ., data = brz_train_sc )
+importance <- data.frame(importance(model))
+
+importance<- data.frame(Variable = row.names(importance), IncNodePurity =importance$IncNodePurity)
+```
+
+
+```{r include=FALSE}
+# Print the variable importance scores
+print(importance)
+```
+
+
+```{r}
+# Plot variable importance
+#varImpPlot(model)
+```
+
+Observing the plot we see that the variables with highest importance score are: fire.insurance + area + property.tax + monthly.tax + parking.spaces + rooms, so we will use them in the Importance Random Forest model.
+
+```{r echo=FALSE}
+set.seed(132)
+# random forest with cross validation 
+rf_fit2 <- randomForest(rent.amount ~  fire.insurance + area + property.tax + monthly.tax + parking.spaces + rooms, trControl  = tr_cont, data = brz_train_sc)
+
+rf_pred2 = predict(rf_fit2, newdata = test_set)
+rf_RMSE2 = sqrt(mean((y_test - rf_pred2)^2))
+```
+
+```{r echo=FALSE}
+cat('RMSE with importance feature selection:', rf_RMSE2)
+```
+
+Using the Importance Feauture selection has improved our RMSE from 276.0161 (Classic RF) to 263.0896 (Importance Score RF).
+
+## 6. Conclusions on Regression
+
+We have implemented many different models:
+
+**Complex models:**
+
+- MULTIPLE LINEAR REGRESSION - RMSE (254.83)
+- AIC - RMSE(254.7283)
+- ELASTIC NET - RMSE (254.7048)
+- XGBOOST - RMSE (199.8115)
+- SVM - RMSE (236.1984)
+- RANDOM FOREST - RMSE (276.0161)
+- RANDOM FOREST with importance - RMSE (263.0896)
+
+**Simple models (low dimensional):**
+
+- LINEAR REGRESSION (using fire.insurance) - RMSE (353.5419)
+- LINEAR REGRESSION (using area) - RMSE (1527.402)
+- MULTIPLE REGRESSION (using fire.insurance + area) - RMSE (342.3592)
+
+Based on the evaluation of different models, including complex and simple ones, the XGBoost model stands out as the best performer in terms of RMSE.
+
+While the XGBoost model is a non-linear model, the linear models (SVM, AIC and Multiple Regression) and the penalized model (Elastic Net) show similar performance, but with slightly higher RMSE values. These linear models may provide reasonably accurate predictions, but they may not capture the complex non-linear relationships present in the data as effectively as XGBoost.
+On the other hand, the Random Forest model performed less effectively, with a higher RMSE of 276.0161. This indicates that the Random Forest model may not be well-suited for capturing the specific patterns and relationships in the dataset.
+
+Overall, the XGBoost model strikes a good balance between complexity, interpretability, and accuracy. It outperforms other models in terms of RMSE, indicating superior prediction accuracy. Therefore, based on the evaluation results, the XGBoost model is CHOSEN as the PREFERRED MODEL for rent amount prediction in this scenario.
+
+## 7. Clustering
+The objective of clustering is to group similar data points together based on their characteristics or features. For the clustering we want just numerical data so we use **num_v**. We scale the numerical variable with an exception for the numerical discrete variables : "bathroom", "rooms", "floor", "parking.spaces".
+
+```{r}
+#we scale the data
+sc_num_v<- data.frame(scale(num_v[ , c('area', 'monthly.tax', 'property.tax', 'fire.insurance', 'rent.amount')]))
+
+#add the other variables to the dataset
+sc_num_v$rooms <- num_v$rooms
+sc_num_v$bathroom <- num_v$bathroom
+sc_num_v$parking.spaces <- num_v$parking.spaces
+sc_num_v$floor <- num_v$floor
+```
+
+### K-Means
+
+Through the Elbow and Silhouette methods we do the evaluate the optimal number of cluster.
+
+**The Elbow Method**
+
+```{r echo=FALSE, fig.height=2, fig.width=4}
+#elbow rule plot
+pl3 <- fviz_nbclust(sc_num_v, kmeans, method = "wss")+
+  labs(title = "WSS - Elbow method", y = "Total WSS")
+```
+
+
+
+```{r echo=FALSE, fig.height=2, fig.width=4}
+# avg silhouette plot
+pl4 <- fviz_nbclust(sc_num_v, kmeans, method = "silhouette")+
+  labs(title = "Silhouette method",y = "Avg silhouette")
+
+```
+
+
+```{r echo=FALSE, fig.height=2, fig.width=8}
+grid.arrange(pl3,pl4,ncol=2)
+```
+
+Looking at the plots from the elbow method we can see that the perfect number of clusters are 2 and the same for the silhouette method.
+
+*But to be sure we considered also 3 clusters and we proved that 2 is the right one*
+
+Through the silhouette score, that measure how well each data point fits its assigned cluster compared to other cluster, we verify the statement above.
+
+```{r echo=FALSE, fig.height=2, fig.width=6}
+set.seed(123)
+# k-means with 2 clusters
+km_1 = kmeans(sc_num_v, 2, nstart = 1, iter.max = 1e2)
+s_i1 = silhouette(km_1$cluster, 
+                 dist(sc_num_v))
+
+# k-means with 3 clusters
+km_2 = kmeans(sc_num_v, 3, nstart = 1, iter.max = 1e2)
+s_i2 = silhouette(km_2$cluster, 
+                 dist(sc_num_v))
+
+
+a = fviz_silhouette(s_i1, main = 'Kmean with 2 cluster', print.summary = FALSE)
+b = fviz_silhouette(s_i2, main = 'Kmean with 3 cluster', print.summary = FALSE)
+
+grid.arrange(a,b, ncol = 2)
+```
+
+We can see from the representation, the data are unbalance inside the cluster. As we can notice from the silhouette score >(0.50),*which suggest that the data points are relatively well-clustered*, 2 clusters is definitely the number that best fit our data.
+
+
+K-means visualization
+```{r echo=FALSE, fig.height=2.5, fig.width=4}
+fviz_cluster(km_1, sc_num_v, main = "K-means 2 clusters", labelsize = 0)
+```
+
+In the plot, each observation is represented by a point. The color of the points represents the cluster groups to which the observations belong.
+Since the plot is based on the first two components, which may not capture all the variability in the data, there might be a lot of points that overlap each other. This overlap occurs because the plot is limited to two dimensions, and some of the information from the additional variables may not be fully represented.
+
+**Hierarchical clustering methods**
+
+To implement the hierarchical clustering method we first used the Correlation based method (present in the r script) but the clusters are not as well defined as the values chosen, that are the euclidean distance and the method ward.D2 and average.
+
+Distance based method
+
+```{r}
+# Convert all columns to numeric
+sc_num_v[] <- lapply(sc_num_v, as.numeric)
+
+dist_euc <- dist(sc_num_v, method = "euclidean")
+hc_euclidean <- hclust(dist_euc, method = "ward.D2")
+hc1_euclidean <- hclust(dist_euc, method = "average")
+```
+
+Clusters are visually represented in a hierarchical tree called a dendrogram and the choice of the ideal number of clusters is done by cutting where the height of the dendrogram is bigger.
+
+```{r echo=FALSE, fig.height=4.5, fig.width=9}
+# Create a layout with one row and two columns
+par(mfrow = c(1, 2))
+
+# Plot the first plot
+plot(hc_euclidean, cex = 0.6, main="", xlab = "ward.D2 method", sub = "")
+
+# Add a title to the plotdrogram
+mtext("Dendrogram Euclidean distance with:", side = 3, line = -2, outer = TRUE)
+
+# Plot the second dendrogram
+plot(hc1_euclidean, cex = 0.6, main="", xlab = "average method", sub = "")
+```
+
+From the plot we notice that, following the ward.D2 method dendrogram, the number of clusters is 2. Meanwhile, with the average method, the number of clusters is  higher and the data are grouped in an unbalanced way. So the ward.D2 method is the most favorable one.
+
+```{r echo=FALSE, fig.height=3.5, fig.width=4}
+#draws a colorfull rectangle around the two clusters identified by the cutting threshold 
+plot(hc_euclidean, cex = 0.6, main = "Euclidean distance with ward method", sub="")
+rect.hclust(hc_euclidean, k = 2, border = 2:6) 
+```
+
+The colourful rectangle let us graphically understand how the data are distributed in the 2 clusters. We can already notice that the data are unbalanced but to be sure we will find the number of observations in each cluster and a graph with their proportion.
+
+```{r echo=FALSE, fig.height=4, fig.width=7}
+#Cut the dendrogram into 2 clusters
+groups <- cutree(hc_euclidean, k=2)
+
+# Table data
+proportions <- table(groups) / sum(table(groups))
+
+labs <- sprintf("%s\n%2f", c("Cluster 1", "Cluster 2"), proportions)
+
+
+# Create Pie Chart
+pie(table(groups), labels= labs , col = rainbow(length(table(groups))), 
+        main = "Cluster distribution")
+```
+
+The following code adds a new column 'cluster' to the data frame *final_data* which now contains the cluster labels obtained from the clustering algorithm.
+
+```{r}
+#append cluster labels to original data
+final_data <- cbind(sc_num_v, cluster = groups)
+```
+
+
+## 8. Conclusions on Clustering
+
+To draw a complete conclusion we print the proportion of point in each cluster for ward_d2 method and for k-means as well. 
+```{r echo=FALSE}
+print("The cluster's proportion for ward.D2 method:")
+      table(final_data$cluster)/8250
+```
+
+```{r echo=FALSE}
+print("The cluster's proportion for for k-means:")
+      table(km_1$cluster)/8250
+```
+
+the distribution of points across the clusters from the hierarchical procedure are balanced. On the other hand from the k-means procedure, we notice that the data are unbalanced since one cluster is the double of the other one, so significantly greater. 
+
+Anyway, the clusters resulting from the hierarchical procedure exhibits a balanced distribution as all the groups have a proportion of points between .45 and .55 as values
+
+**Compare clustering results**
+
+To compare the clustering results with the city variable, we can use a contingency table. This will allow us to observe the distribution of cities within each cluster and assess any potential relationship between the clusters and the cities. We first create the contingency table using the kmean result and then the hierarchical result.
+```{r fig.height=5, fig.width=15}
+sc_num_v$city <- finaldata$city
+# Create the contingency table with k-means
+cont_table_kmeans <- table(km_1$cluster, sc_num_v$city)
+
+# Create the contingency table with hierarchical clustering
+cont_table_hierarchical <- table(final_data$cluster, sc_num_v$city)
+
+# Set up the plotting layout with two plots side by side
+par(mfrow = c(1, 2))
+
+# Plot the barplot for k-means
+barplot(cont_table_kmeans, beside = TRUE, legend = rownames(cont_table_kmeans),
+        args.legend = list(x = "topleft"),
+        main = "K-means Contingency Table",
+        xlab = "K-means Cluster", ylab = "Frequency", col = rainbow(2))
+
+# Plot the barplot for hierarchical clustering
+barplot(cont_table_hierarchical, beside = TRUE, legend = rownames(cont_table_hierarchical),
+        args.legend = list(x = "topleft"),
+        main = "Hierarchical Contingency Table",
+        xlab = "Hierarchical Cluster", ylab = "Frequency", col = rainbow(2))
+
+```
+
+We calculated and displayed the contingency tables for the cluster labels obtained from the k-means  and hierarchical clustering results, respectively. The contingency tables provide insights into the distribution of cluster labels across different cities, we can see that the predominance of the houses can be found in San Paulo for both the clusters in the two algorithms.
+
+**Adjusted Rand Index**
+
+We can compare the agreement between different clustering partitions using a variety of methods. An useful one is the Adjusted Rand Index, which is defined between -1 (perfect disagreement) and 1 (perfect agreement), and has expected value equal to zero in the case of random partition.
+
+```{r echo=FALSE}
+print('The adjusted Rand index for the k_means is:')
+adjustedRandIndex(km_1$cluster, sc_num_v$city)
+```
+
+```{r echo=FALSE}
+print('The adjusted Rand index for the ward.D2 method is:')
+adjustedRandIndex(final_data$cluster, sc_num_v$city)
+```
+
+The adjusted Rand index values are close to 0, so it indicates that the clustering methods produce clusters that are independent or unrelated to each other. In this case the two partitions, the clusters found and the cities are independent. The reference clustering (cities) does not represent well our clusters. It confirms the reason of the asymmetry of our data and as a matter of fact it demonstrates that inside the same cluster there is no correlation with the cities.
